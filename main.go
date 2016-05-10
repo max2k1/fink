@@ -1,4 +1,4 @@
-package main;
+package main
 
 import (
 	"bytes"
@@ -10,37 +10,32 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
-	//_ "net/http/pprof"
-	// "runtime"
-	//"runtime/pprof"
-	//"os"
+	"os"
+	"runtime/pprof"
 	"sync"
-    "time"
+	"time"
 
 	"github.com/spf13/viper"
-	httpclient "github.com/mreiferson/go-httpclient"
 )
 
 type Handler struct {
-	BindTo 			string
-	Mirror 			string
-	SendTo 			string
+	BindTo string
+	Mirror string
+	SendTo string
 
-	CertFile 		string
-	KeyFile  		string
+	CertFile string
+	KeyFile  string
 
-	MirrorHostName	string
-	SendToHostName	string
+	MirrorHostName string
+	SendToHostName string
 
-	MirrorTimeout	time.Duration
-	SendToTimeout	time.Duration
-
-	Client			*http.Client
+	MirrorTimeout time.Duration
+	SendToTimeout time.Duration
 }
 
 var (
-	debug = flag.Bool("debug", false, "Be more verbose in logging")
-	//cpuprofile = flag.String("cpuprofile", "", "Write cpu profile to file")
+	debug      = flag.Bool("debug", false, "Be more verbose in logging")
+	cpuprofile = flag.String("cpuprofile", "", "Write cpu profile to file")
 )
 
 func (h Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -56,42 +51,32 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				}
 			}()
 
-			// Open new TCP connection to the server
-			//connTCP, err := net.DialTimeout("tcp", h.Mirror, h.MirrorTimeout)
-			//if err != nil {
-			//	if *debug {
-			//		fmt.Printf("Failed to connect to mirror: %v\n", err)
-			//	}
-			//	return
-			//}
-
-			//connHTTP := httputil.NewClientConn(connTCP, nil)
-			//defer connHTTP.Close()
-
 			if len(h.MirrorHostName) > 0 {
 				req2.Host = h.MirrorHostName
 			}
 
-			// Write request to the wire
-			err = connHTTP.Write(req2)
+			// Open new TCP connection to the server
+			connTCP, err := net.DialTimeout("tcp", h.Mirror, h.MirrorTimeout)
 			if err != nil {
+				if *debug {
+					fmt.Printf("Failed to connect to mirror: %v\n", err)
+				}
+				return
+			}
+
+			connHTTP := httputil.NewClientConn(connTCP, nil)
+			defer connHTTP.Close()
+
+			// Write request to the wire
+			if err = connHTTP.Write(req2); err != nil {
 				if *debug {
 					fmt.Printf("Failed to send to mirror (%s): %v\n", h.Mirror, err)
 				}
 				return
 			}
 
-			// Dump request, if we're asked to
-			// if *debug {
-			// 	dump, _ := httputil.DumpRequest(req2, true)
-			// 	fmt.Println(string(dump))
-			// }
-
 			// Read response
-			//resp, err := connHTTP.Read(req2)
-			req2.URL.Scheme = "http"
-			req2.URL.Host = h.Mirror
-			resp, err := h.Client.Do(req2)
+			resp, err := connHTTP.Read(req2)
 			if err != nil && err != httputil.ErrPersistEOF {
 				if *debug {
 					fmt.Printf("Failed to receive from mirror (%s): %v\n", h.Mirror, err)
@@ -104,6 +89,10 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}()
 	} else {
 		req1 = req
+	}
+
+	if len(h.SendToHostName) > 0 {
+		req1.Host = h.SendToHostName
 	}
 
 	defer func() {
@@ -125,12 +114,6 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	connHTTP := httputil.NewClientConn(connTCP, nil)
 	defer connHTTP.Close()
 
-	//req1 := cloneRequest(req)
-	// req1.Close = true
-	if len(h.SendToHostName) > 0 {
-		req1.Host = h.SendToHostName
-	}
-
 	// Dump request, if we're asked to
 	// if *debug {
 	// 	dump, _ := httputil.DumpRequest(req1, true)
@@ -149,7 +132,6 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	// Read response
 	resp, err := connHTTP.Read(req1)
-	// resp, err := connHTTP.Do(req1)
 	if err != nil && err != httputil.ErrPersistEOF {
 		if *debug {
 			fmt.Printf("Failed to receive from %s: %v\n", h.SendTo, err)
@@ -158,7 +140,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Dump response, if we're asked to	
+	// Dump response, if we're asked to
 	// if *debug {
 	// 	dump, err := httputil.DumpResponse(resp, true)
 	// 	if err == nil {
@@ -171,7 +153,6 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		w.Header()[k] = v
 	}
 
-	// w.Header().Set("Connection", "Close")
 	w.WriteHeader(resp.StatusCode)
 
 	body, _ := ioutil.ReadAll(resp.Body)
@@ -179,34 +160,34 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func splitRequest(src *http.Request) (dst1 *http.Request, dst2 *http.Request) {
-	var b1,b2 *bytes.Buffer
+	var b1, b2 *bytes.Buffer
 	var w io.Writer
 	defer src.Body.Close()
 	b1 = new(bytes.Buffer)
 	b2 = new(bytes.Buffer)
 	w = io.MultiWriter(b1, b2)
 	io.Copy(w, src.Body)
-	dst1 = &http.Request {
-		Method:			src.Method,
-		URL:			src.URL,
-		Proto:			src.Proto,
-		ProtoMajor:		src.ProtoMajor,
-		ProtoMinor:		src.ProtoMinor,
-		Header:			src.Header,
-		Body:			ioutil.NopCloser(b1),
-		Host:			src.Host,
-		ContentLength:	src.ContentLength,
+	dst1 = &http.Request{
+		Method:        src.Method,
+		URL:           src.URL,
+		Proto:         src.Proto,
+		ProtoMajor:    src.ProtoMajor,
+		ProtoMinor:    src.ProtoMinor,
+		Header:        src.Header,
+		Body:          ioutil.NopCloser(b1),
+		Host:          src.Host,
+		ContentLength: src.ContentLength,
 	}
-	dst2 = &http.Request {
-		Method:			src.Method,
-		URL:			src.URL,
-		Proto:			src.Proto,
-		ProtoMajor:		src.ProtoMajor,
-		ProtoMinor:		src.ProtoMinor,
-		Header:			src.Header,
-		Body:			ioutil.NopCloser(b2),
-		Host:			src.Host,
-		ContentLength:	src.ContentLength,
+	dst2 = &http.Request{
+		Method:        src.Method,
+		URL:           src.URL,
+		Proto:         src.Proto,
+		ProtoMajor:    src.ProtoMajor,
+		ProtoMinor:    src.ProtoMinor,
+		Header:        src.Header,
+		Body:          ioutil.NopCloser(b2),
+		Host:          src.Host,
+		ContentLength: src.ContentLength,
 	}
 	return
 }
@@ -215,11 +196,11 @@ func init() {
 	flag.Parse()
 	viper.SetConfigType("properties")
 	viper.SetConfigName("fink")
-	viper.AddConfigPath("/etc/fink") 
+	viper.AddConfigPath("/etc/fink")
 	viper.AddConfigPath(".")
 	err := viper.ReadInConfig() // Find and read the config file
-	if err != nil { // Handle errors reading the config file
-    	panic(fmt.Errorf("Fatal error config file: %s \n", err))
+	if err != nil {             // Handle errors reading the config file
+		panic(fmt.Errorf("Fatal error config file: %s \n", err))
 	}
 }
 
@@ -228,18 +209,14 @@ func main() {
 	var i int = 0
 	var wg sync.WaitGroup
 
-	//if *cpuprofile != "" {
-	//	f, err := os.Create(*cpuprofile)
-	//	if err != nil {
-	//		panic(fmt.Errorf("Failed to create file %s: %v\n", *cpuprofile, err))
-	//	}
-	//	pprof.StartCPUProfile(f)
-	//	defer pprof.StopCPUProfile()
-	//}
-
-	//go func() {
-	//	fmt.Println(http.ListenAndServe("[::]:6060", nil))
-	//}()
+	if *cpuprofile != "" {
+		f, err := os.Create(*cpuprofile)
+		if err != nil {
+			panic(fmt.Errorf("Failed to create file %s: %v\n", *cpuprofile, err))
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
 
 	for {
 		var item = Handler{}
@@ -247,14 +224,14 @@ func main() {
 
 		// Where to listen
 		key = fmt.Sprintf("listen.%d", i)
-		if ! viper.IsSet(key) {
+		if !viper.IsSet(key) {
 			break
 		}
 		item.BindTo = viper.GetString(key)
 
 		// Primary destination to forward requests
 		key = fmt.Sprintf("sendto.%d", i)
-		if ! viper.IsSet(key) {
+		if !viper.IsSet(key) {
 			break
 		}
 		item.SendTo = viper.GetString(key)
@@ -313,14 +290,12 @@ func main() {
 		panic(fmt.Sprintf("No valid configuration found!"))
 	}
 
-
 	wg.Add(len(config))
 	for i = range config {
 		go func(h Handler) {
 			defer wg.Done()
 			var err error
 			var listener net.Listener
-			var transport *httpclient.Transport
 
 			if len(h.CertFile) > 0 { // Bind to SSL-socket, if key/cert files are present
 				cert, err := tls.LoadX509KeyPair(h.CertFile, h.KeyFile)
@@ -335,7 +310,7 @@ func main() {
 					panic(fmt.Errorf("Failed to listen to %s: %s\n", h.BindTo, err))
 					return
 				}
-			} else { // Otherwise simply listen to the socket
+			} else { // Otherwise simply bind to socket
 				listener, err = net.Listen("tcp", h.BindTo)
 				if err != nil {
 					panic(fmt.Errorf("Failed to listen to %s: %s\n", h.BindTo, err))
@@ -343,18 +318,19 @@ func main() {
 				}
 			}
 
-			transport = &httpclient.Transport {
-				ConnectTimeout:        50 * time.Millisecond,
-				RequestTimeout:        h.SendToTimeout,
-				//ResponseHeaderTimeout: 5*time.Second,
-			}
-			defer transport.Close()
-
-			h.Client = &http.Client{Transport: transport}
-
 			http.Serve(listener, h)
-		} (config[i])
+		}(config[i])
 	}
 
-	wg.Wait()
+	if *cpuprofile != "" { // work for 30secs if we're under debugging
+		timeout := time.After(30 * time.Second)
+		for {
+			select {
+			case <-timeout:
+				return
+			}
+		}
+	} else {
+		wg.Wait()
+	}
 }
