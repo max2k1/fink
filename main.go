@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	//_ "net/http/pprof"
-	"runtime"
+	// "runtime"
 	//"runtime/pprof"
 	//"os"
 	"sync"
@@ -68,21 +68,29 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			//connHTTP := httputil.NewClientConn(connTCP, nil)
 			//defer connHTTP.Close()
 
-			//if len(h.MirrorHostName) > 0 {
-			//	req2.Host = h.MirrorHostName
-			//}
+			if len(h.MirrorHostName) > 0 {
+				req2.Host = h.MirrorHostName
+			}
 
 			// Write request to the wire
-			//err = connHTTP.Write(req2)
-			//if err != nil {
-			//	if *debug {
-			//		fmt.Printf("Failed to send to mirror (%s): %v\n", h.Mirror, err)
-			//	}
-			//	return
-			//}
+			err = connHTTP.Write(req2)
+			if err != nil {
+				if *debug {
+					fmt.Printf("Failed to send to mirror (%s): %v\n", h.Mirror, err)
+				}
+				return
+			}
+
+			// Dump request, if we're asked to
+			// if *debug {
+			// 	dump, _ := httputil.DumpRequest(req2, true)
+			// 	fmt.Println(string(dump))
+			// }
 
 			// Read response
 			//resp, err := connHTTP.Read(req2)
+			req2.URL.Scheme = "http"
+			req2.URL.Host = h.Mirror
 			resp, err := h.Client.Do(req2)
 			if err != nil && err != httputil.ErrPersistEOF {
 				if *debug {
@@ -123,7 +131,7 @@ func (h Handler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		req1.Host = h.SendToHostName
 	}
 
-	// Dump request, if we're asked to	
+	// Dump request, if we're asked to
 	// if *debug {
 	// 	dump, _ := httputil.DumpRequest(req1, true)
 	// 	fmt.Println(string(dump))
@@ -204,11 +212,10 @@ func splitRequest(src *http.Request) (dst1 *http.Request, dst2 *http.Request) {
 }
 
 func init() {
-	runtime.GOMAXPROCS(runtime.NumCPU())
 	flag.Parse()
 	viper.SetConfigType("properties")
 	viper.SetConfigName("fink")
-	viper.AddConfigPath("/etc/yandex/market-fink") 
+	viper.AddConfigPath("/etc/fink") 
 	viper.AddConfigPath(".")
 	err := viper.ReadInConfig() // Find and read the config file
 	if err != nil { // Handle errors reading the config file
